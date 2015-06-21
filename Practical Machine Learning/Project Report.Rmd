@@ -1,0 +1,205 @@
+---
+title: "Practical Machine Learning"
+output:
+  html_document:
+    theme: cerulean
+---
+
+## Introduction:
+
+This report describes the process that I used to build a machine learning algorithm for the John Hopkins Practical Machine Learning course.
+
+The objective of the exercise is to predict the way in which a participant performed a Dumbbell Biceps Curl given the readings from a number of sensors. The researchers (Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.) collected training data from 6 participants where the curl was classified into one of the following classes:
+
+- Class A: exactly according to the specification
+
+- Class B: throwing the elbows to the front
+
+- Class C: lifting the dumbbell only halfway
+
+- Class D: lowering the dumbbell only halfway
+
+- Class E: throwing the hips to the front
+
+I have created a machine learning algorithm, trained on this data. The algorithm has then been used to predict the class of exercise of 20 different test cases.
+
+## Study Design:
+
+The training data provided consists of 19622 cases with 160 variables. So as to be able to perform cross-validation, I have partitioned this into three:
+
+- A training data set used to train a variety of potential models. This will be 60% of the data.
+
+- A test data set to compare the performance of the potential models and choose the final model. This will be 20% of the data.
+
+- An evaluation data set to calculate the out of sample error. This will be 20% of the data.
+
+## Data:
+
+Data has been collected using 4 sensors attached to the participants glove, arm, belt and dumbbell.
+
+Each sensor operates at 45Hz and records 9 different pieces of data:
+
+- Gyros (x, y and z component)
+- Accel (x, y and z component)
+- magnet (x, y and z component)
+
+From these 9 readings, 4 further values are calculated:
+
+- Roll
+- Pitch
+- Yaw
+- Total acceleration
+
+The original researchers split these readings into windows and calculated features on these windows. For the purpose of my project these windows will not be used and the calculated features will be removed from the data set.
+
+```{r}
+  require(caret, quietly=TRUE)
+  set.seed(1066)
+  ## Load in the data:
+  raw <- read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                  na.strings=c("NA", "#DIV/0!"),
+                  stringsAsFactors = FALSE)
+  raw$classe <- as.factor(raw$classe)
+  ## Remove window features:
+  raw_No_Windows <- raw[,colSums(is.na(raw)) < 1000]
+  ## Remove variables related to data collection process:
+  raw_Final <- raw_No_Windows[,8:60]
+
+  ## Split into training, testing and evaluating partitions:
+  inTrain <- createDataPartition(y=raw_Final$classe, p=0.6, list=FALSE)
+  training <- raw_Final[inTrain,]
+  testing <- raw_Final[-inTrain,]
+  inEval <- createDataPartition(y=testing$classe, p=0.5, list=FALSE)
+  eval <- testing[inEval,]
+  testing <- testing[-inEval,]
+```
+
+## Model 1:
+
+As a first attempt, I have created a CART model using the rpart method using all predictor values:
+
+```{r}
+  model1 <- train(classe~., method = "rpart", data=training)
+```
+
+We can view the tree used in the model:
+
+```{r}
+  require(rattle, quietly = TRUE)
+  fancyRpartPlot(model1$finalModel, sub = "Tree for Model 1")
+```
+
+To assess the performance of model 1 we can calculate the confusion matrix on the testing data set:
+
+```{r}
+   confusionMatrix(predict(model1, testing), testing$classe)
+```
+
+The accuracy of the model on the testing data set is `r round(confusionMatrix(predict(model1, testing), testing$classe)$overall[[1]], digits = 4)` which is quite disappointing. Hopefully we can find a model with much better accuracy.
+
+## Model 2:
+
+Since the CART model did not have satisfactory accuracy, we can try a different approach to building a model. For the second model we will use a Random Forest:
+
+```{r}
+  ## The train function below is very slow, instead I will use a faster method:
+  ## model2 <- train(classe~., method = "rf", data=training) 
+  require(randomForest, quietly = TRUE)
+  model2 <- randomForest(classe~., data=training)
+```
+
+With so many features and a large training data set, I am conscious that this model might be over-fitted. Let's check it's performance on the testing data set:
+
+```{r}
+   confusionMatrix(predict(model2, testing), testing$classe)
+```
+
+The accuracy of the model on the testing data set is `r round(confusionMatrix(predict(model2, testing), testing$classe)$overall[[1]], digits = 4)`. this is remarkably good.
+
+We can check the importance of the different variables in the model:
+
+```{r}
+  varImp(model2, scale = TRUE)
+```
+
+Plotting graphs using pairs of the most important variables can help us to observe structure to the data:
+
+```{r}
+  require(ggplot2)
+  require(gridExtra)
+  p1 <- qplot(roll_belt, yaw_belt,
+              color=classe, data=training)
+  p2 <- qplot(roll_belt, pitch_belt,
+              color=classe, data=training)
+  p3 <- qplot(pitch_belt, pitch_forearm,
+              color=classe, data=training)
+  p4 <- qplot(magnet_dumbbell_x, magnet_dumbbell_y,
+              color=classe, data=training)
+  grid.arrange(p1,p2,p3,p4, ncol=2)
+```
+
+We can see from the graphs that there is a structure to the data. Data points of the same type appear to form multiple overlapping clusters. This may be why the CART model was not accurate but the random forest is.
+
+## Models 3 and 4:
+
+It will be easier to understand our model if it can use fewer variables without compromising accuracy.
+
+I will build models 3 and 4 using the same random forest method as model 2 but only using the most important variables:
+
+```{r}
+  model3 <- randomForest(classe~roll_belt
+                         +yaw_belt
+                         +pitch_forearm
+                         +magnet_dumbbell_z
+                         +pitch_belt
+                         , data=training)
+  model4 <- randomForest(classe~roll_belt
+                         +yaw_belt
+                         +pitch_forearm
+                         +magnet_dumbbell_z
+                         +pitch_belt
+                         +magnet_dumbbell_y
+                         +roll_forearm
+                         +magnet_dumbbell_x
+                         +roll_dumbbell
+                         +accel_dumbbell_y
+                         , data=training)
+```
+
+We can compare the accuracy of these models to model 2:
+
+```{r}
+  confusionMatrix(predict(model2, testing), testing$classe)$overall
+  confusionMatrix(predict(model3, testing), testing$classe)$overall
+  confusionMatrix(predict(model4, testing), testing$classe)$overall
+```
+
+There is quite a significant reduction in accuracy compared to model 2. Although these are simpler models I don't think this trade-off is worthwhile when we are trying to accurately predict all 20 test cases for this project.
+
+## Final Model:
+
+I am going to use model 2 as my final model. It is exceptionally accurate on the testing data set.
+
+Had this model not been so accurate I would have considered different methods (for example using boosting or combining predictors) and also preprocessing the data set to create better features.
+
+Let's check the final model on our evaluation data set to get a final estimate for the out of sample error rate:
+
+```{r}
+  confusionMatrix(predict(model2, eval), eval$classe)
+```
+
+The out of sample accuracy is 99.3%.
+
+## Submitting Prediction Results:
+
+Using this final model I have predicted and submitted the output from the 20 test cases. For reasons of space the code for this is not included - it can be found in the instructions provided by the instructor.
+
+All predictions using the model were correct. I consider the project to have been successful.
+
+## Final Remark:
+
+I am somewhat uneasy about this project. Although impressed with the accuracy of the random forest method I am skeptical that class of activity can be predicted with such accuracy from instantaneous sensor readings. I would be interested to see video footage of the data collection process and see if the 5 classes of exercise were performed in exaggeratedly different manners. While this would allow for good results from the machine learning algorithm it would make the results less generalizable to real world situations.
+
+## References:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. http://groupware.les.inf.puc-rio.br/har
